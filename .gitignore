@@ -1,0 +1,16 @@
+# Go 构建产物
+*.exe
+*.exe~
+*.test
+*.out
+
+# FFI 绑定产物（由 rust-store 构建产出，不入库；库路径见 README 探测顺序）
+*.dll
+*.so
+*.dylib
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+*.swp
+Thumbs.db
