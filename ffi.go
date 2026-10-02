@@ -35,6 +35,12 @@ var (
 	rcoreFinalizeStrip     func(post, items unsafe.Pointer) unsafe.Pointer
 	rcoreRestoreSortOrder  func(items, ids, sort unsafe.Pointer) unsafe.Pointer
 	rcoreRestoreRowsJSON   func(rowShape, rows unsafe.Pointer) unsafe.Pointer
+	rcoreRegistrySetRbac   func(handle uint64, policy unsafe.Pointer) unsafe.Pointer
+	rcoreRbacEnabled       func(handle uint64) unsafe.Pointer
+	rcoreRbacCan           func(handle uint64, model, action, ctx unsafe.Pointer) unsafe.Pointer
+	rcoreRbacReadable      func(handle uint64, model, ctx unsafe.Pointer) unsafe.Pointer
+	rcoreRbacWritable      func(handle uint64, model, ctx unsafe.Pointer) unsafe.Pointer
+	rcoreRbacRowCond       func(handle uint64, model, action, ctx unsafe.Pointer) unsafe.Pointer
 )
 
 var initOnce sync.Once
@@ -78,6 +84,12 @@ func load() error {
 		bind(&rcoreFinalizeStrip, "rcore_finalize_strip")
 		bind(&rcoreRestoreSortOrder, "rcore_restore_sort_order")
 		bind(&rcoreRestoreRowsJSON, "rcore_restore_rows_json")
+		bind(&rcoreRegistrySetRbac, "rcore_registry_set_rbac")
+		bind(&rcoreRbacEnabled, "rcore_rbac_enabled")
+		bind(&rcoreRbacCan, "rcore_rbac_can")
+		bind(&rcoreRbacReadable, "rcore_rbac_readable_fields")
+		bind(&rcoreRbacWritable, "rcore_rbac_writable_fields")
+		bind(&rcoreRbacRowCond, "rcore_rbac_row_condition")
 		if initErr != nil {
 			return
 		}

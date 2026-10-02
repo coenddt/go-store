@@ -236,3 +236,101 @@ func TestQueryWithCount(t *testing.T) {
 		t.Fatalf("末页应 hasMore=false: %v", out)
 	}
 }
+
+// ── RBAC（ffi 信封对拍：与 core-py/core-node 的 rbac.bindings 同断言，A5/A7） ──
+
+func TestRbacSetAndDeny(t *testing.T) {
+	s := freshStore(t)
+
+	policy := map[string]any{
+		"mode":  "enforce",
+		"roles": map[string]any{"editor": map[string]any{}},
+		"grants": []any{
+			map[string]any{"role": "editor", "model": "user", "actions": []any{"read", "insert"}},
+		},
+	}
+	if err := s.SetRbac(policy); err != nil {
+		t.Fatalf("SetRbac 失败: %v", err)
+	}
+	enabled, err := s.RbacEnabled()
+	if err != nil || !enabled {
+		t.Fatalf("RbacEnabled = %v, %v（应 true）", enabled, err)
+	}
+
+	ctx := &Context{UserID: "u1", Roles: []string{"editor"}}
+	allowed, err := s.RbacCan("user", "insert", ctx)
+	if err != nil || !allowed {
+		t.Fatalf("granted insert 应放行: %v, %v", allowed, err)
+	}
+	allowed, err = s.RbacCan("user", "remove", ctx)
+	if err != nil || allowed {
+		t.Fatalf("未授予 remove 应拒绝: %v, %v", allowed, err)
+	}
+	// enforce 受管 + 未配置 model → default deny
+	allowed, err = s.RbacCan("nonexistent_model", "read", ctx)
+	if err != nil {
+		t.Fatalf("RbacCan 未注册 model 不应 FFI 报错（判决层面拒绝）: %v", err)
+	}
+	if allowed {
+		t.Fatalf("enforce 受管角色未配置 model 应 default deny")
+	}
+
+	// 清除后直通
+	if err := s.SetRbac(nil); err != nil {
+		t.Fatalf("SetRbac(nil) 失败: %v", err)
+	}
+	enabled, err = s.RbacEnabled()
+	if err != nil || enabled {
+		t.Fatalf("清除后 RbacEnabled = %v, %v（应 false）", enabled, err)
+	}
+	allowed, err = s.RbacCan("user", "remove", ctx)
+	if err != nil || !allowed {
+		t.Fatalf("清除后应直通: %v, %v", allowed, err)
+	}
+}
+
+func TestRbacReadableFieldsAndRowCondition(t *testing.T) {
+	s := freshStore(t)
+
+	policy := map[string]any{
+		"mode":  "enforce",
+		"roles": map[string]any{"viewer": map[string]any{}, "editor": map[string]any{}},
+		"grants": []any{
+			map[string]any{"role": "viewer", "model": "user", "actions": []any{"read"}, "readFields": []any{"name"}},
+			map[string]any{"role": "editor", "model": "user", "actions": []any{"read", "insert"}},
+		},
+	}
+	if err := s.SetRbac(policy); err != nil {
+		t.Fatalf("SetRbac 失败: %v", err)
+	}
+
+	viewer := &Context{UserID: "u2", Roles: []string{"viewer"}}
+	fields, err := s.RbacReadableFields("user", viewer)
+	if err != nil {
+		t.Fatalf("RbacReadableFields: %v", err)
+	}
+	if len(fields) != 1 || fields[0] != "name" {
+		t.Fatalf("viewer 可读字段应为 [name]: %v", fields)
+	}
+	editor := &Context{UserID: "u3", Roles: []string{"editor"}}
+	if _, err := s.RbacReadableFields("user", nil); err != nil {
+		t.Fatalf("nil ctx 应不裁剪（FFI 正常返回 null）: %v", err)
+	}
+
+	if err := s.SetRbac(map[string]any{
+		"mode":  "overlay",
+		"roles": map[string]any{"reader": map[string]any{}},
+		"grants": []any{
+			map[string]any{"role": "reader", "model": "user", "actions": []any{"read"}, "ownerOnly": true},
+		},
+	}); err != nil {
+		t.Fatalf("SetRbac 失败: %v", err)
+	}
+	cond, err := s.RbacRowCondition("user", "read", &Context{UserID: "u9", Roles: []string{"reader"}})
+	if err != nil {
+		t.Fatalf("RbacRowCondition: %v", err)
+	}
+	if cond["createdBy"] != "u9" {
+		t.Fatalf("ownerOnly 行条件应 createdBy=u9: %v", cond)
+	}
+}

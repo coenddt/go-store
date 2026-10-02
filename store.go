@@ -723,3 +723,131 @@ func orEmpty(m map[string]any) map[string]any {
 	}
 	return m
 }
+
+// ── RBAC 动态策略（判决唯一在 core；本层零判决，仅透传配置与查询面） ──
+
+// SetRbac 注入 RBAC 策略（nil = 清除关闭）；解析失败显式报错（fail-fast）。
+// 注入后 plan 链路的拦截自动生效（core 判决）。
+func (s *Store) SetRbac(policy map[string]any) error {
+	arg, err := cArgFor(policy) // nil → "null"（清除）
+	if err != nil {
+		return err
+	}
+	defer freeCArg(arg)
+	return callFFIInto(rcoreRegistrySetRbac(s.handle, arg), nil)
+}
+
+// RbacEnabled 返回 RBAC 策略是否已注入。
+func (s *Store) RbacEnabled() (bool, error) {
+	var enabled bool
+	if err := callFFIInto(rcoreRbacEnabled(s.handle), &enabled); err != nil {
+		return false, err
+	}
+	return enabled, nil
+}
+
+// RbacCan RBAC 动作判决：action ∈ {read, insert, update, remove}；
+// 策略未注入 / RBAC 不介入 → true（与 plan 链路的实际拦截结果一致）。
+func (s *Store) RbacCan(model, action string, actx *Context) (bool, error) {
+	ctxArg := "null"
+	if actx != nil {
+		b, err := json.Marshal(actx)
+		if err != nil {
+			return false, fmt.Errorf("ctx 序列化失败: %w", err)
+		}
+		ctxArg = string(b)
+	}
+	m, err := rawCFor(model)
+	if err != nil {
+		return false, err
+	}
+	defer freeCArg(m)
+	a, err := rawCFor(action)
+	if err != nil {
+		return false, err
+	}
+	defer freeCArg(a)
+	c, err := allocCBytes(ctxArg)
+	if err != nil {
+		return false, err
+	}
+	defer freeCArg(c)
+	var allowed bool
+	if err := callFFIInto(rcoreRbacCan(s.handle, m, a, c), &allowed); err != nil {
+		return false, err
+	}
+	return allowed, nil
+}
+
+// RbacReadableFields RBAC 叠加后的可读字段集（静态 ∩ readFields；null ctx → nil 不裁剪）。
+func (s *Store) RbacReadableFields(model string, actx *Context) ([]string, error) {
+	var fields []string
+	if err := s.rbacFields(rcoreRbacReadable, model, actx, &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+// RbacWritableFields RBAC 叠加后的可写字段集（静态 ∩ writeFields；null ctx → nil 不裁剪）。
+func (s *Store) RbacWritableFields(model string, actx *Context) ([]string, error) {
+	var fields []string
+	if err := s.rbacFields(rcoreRbacWritable, model, actx, &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+func (s *Store) rbacFields(fn func(uint64, unsafe.Pointer, unsafe.Pointer) unsafe.Pointer, model string, actx *Context, out *[]string) error {
+	ctxArg := "null"
+	if actx != nil {
+		b, err := json.Marshal(actx)
+		if err != nil {
+			return fmt.Errorf("ctx 序列化失败: %w", err)
+		}
+		ctxArg = string(b)
+	}
+	m, err := rawCFor(model)
+	if err != nil {
+		return err
+	}
+	defer freeCArg(m)
+	c, err := allocCBytes(ctxArg)
+	if err != nil {
+		return err
+	}
+	defer freeCArg(c)
+	return callFFIInto(fn(s.handle, m, c), out)
+}
+
+// RbacRowCondition RBAC 行级条件（ownerOnly/condition 的 OR 合并体）；
+// action ∈ {read, update, remove}（insert 无行级语义）；nil map = 无行级收紧。
+func (s *Store) RbacRowCondition(model, action string, actx *Context) (map[string]any, error) {
+	ctxArg := "null"
+	if actx != nil {
+		b, err := json.Marshal(actx)
+		if err != nil {
+			return nil, fmt.Errorf("ctx 序列化失败: %w", err)
+		}
+		ctxArg = string(b)
+	}
+	m, err := rawCFor(model)
+	if err != nil {
+		return nil, err
+	}
+	defer freeCArg(m)
+	a, err := rawCFor(action)
+	if err != nil {
+		return nil, err
+	}
+	defer freeCArg(a)
+	c, err := allocCBytes(ctxArg)
+	if err != nil {
+		return nil, err
+	}
+	defer freeCArg(c)
+	var cond map[string]any
+	if err := callFFIInto(rcoreRbacRowCond(s.handle, m, a, c), &cond); err != nil {
+		return nil, err
+	}
+	return cond, nil
+}
