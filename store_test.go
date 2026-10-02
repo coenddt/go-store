@@ -88,7 +88,10 @@ func TestInsertQueryUpdateRemove(t *testing.T) {
 		t.Fatalf("update 结果 = %v", updated)
 	}
 
-	// 权限：guest 写入拒绝（core ERR_NO_WRITE，原样透传）
+	// 权限：guest 写入拒绝（清单化语义：拒写清单显式承载，core ERR_NO_WRITE 原样透传）
+	if err := s.SetDenyWriteRoles([]string{"guest"}); err != nil {
+		t.Fatalf("SetDenyWriteRoles: %v", err)
+	}
 	guest := &Context{UserID: "g1", Roles: []string{"guest"}}
 	_, denied := s.Update(ctx, "user", map[string]any{"_id": uid}, map[string]any{"age": 1}, guest)
 	if denied == nil {
@@ -266,13 +269,23 @@ func TestRbacSetAndDeny(t *testing.T) {
 	if err != nil || allowed {
 		t.Fatalf("未授予 remove 应拒绝: %v, %v", allowed, err)
 	}
-	// enforce 受管 + 未配置 model → default deny
-	allowed, err = s.RbacCan("nonexistent_model", "read", ctx)
+	// enforce 受管 + 策略未覆盖的已注册 model → default deny（判决层面拒绝，无 FFI 错；
+	// 对齐 core-py/core-node 的 rbac.bindings 基准：未配置 model 指「已注册但无 grant」）
+	postSchema := map[string]any{
+		"name":       "post",
+		"collection": "post",
+		"idPrefix":   "p",
+		"fields":     map[string]any{"title": map[string]any{"type": "string"}},
+	}
+	if err := s.Register(postSchema); err != nil {
+		t.Fatalf("注册 post 失败: %v", err)
+	}
+	allowed, err = s.RbacCan("post", "read", ctx)
 	if err != nil {
-		t.Fatalf("RbacCan 未注册 model 不应 FFI 报错（判决层面拒绝）: %v", err)
+		t.Fatalf("RbacCan 策略未覆盖的已注册 model 不应 FFI 报错（判决层面拒绝）: %v", err)
 	}
 	if allowed {
-		t.Fatalf("enforce 受管角色未配置 model 应 default deny")
+		t.Fatalf("enforce 受管角色未覆盖 model 应 default deny")
 	}
 
 	// 清除后直通
@@ -312,7 +325,6 @@ func TestRbacReadableFieldsAndRowCondition(t *testing.T) {
 	if len(fields) != 1 || fields[0] != "name" {
 		t.Fatalf("viewer 可读字段应为 [name]: %v", fields)
 	}
-	editor := &Context{UserID: "u3", Roles: []string{"editor"}}
 	if _, err := s.RbacReadableFields("user", nil); err != nil {
 		t.Fatalf("nil ctx 应不裁剪（FFI 正常返回 null）: %v", err)
 	}
