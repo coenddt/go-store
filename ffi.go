@@ -36,6 +36,9 @@ var (
 	rcoreRestoreSortOrder  func(items, ids, sort unsafe.Pointer) unsafe.Pointer
 	rcoreRestoreRowsJSON   func(rowShape, rows unsafe.Pointer) unsafe.Pointer
 	rcoreRegistrySetRbac   func(handle uint64, policy unsafe.Pointer) unsafe.Pointer
+	rcoreRegistrySetExemptRoles        func(handle uint64, roles unsafe.Pointer) unsafe.Pointer
+	rcoreRegistrySetDenyWriteRoles     func(handle uint64, roles unsafe.Pointer) unsafe.Pointer
+	rcoreRegistrySetUnconfiguredPolicy func(handle uint64, policy unsafe.Pointer) unsafe.Pointer
 	rcoreRbacEnabled       func(handle uint64) unsafe.Pointer
 	rcoreRbacCan           func(handle uint64, model, action, ctx unsafe.Pointer) unsafe.Pointer
 	rcoreRbacReadable      func(handle uint64, model, ctx unsafe.Pointer) unsafe.Pointer
@@ -85,6 +88,9 @@ func load() error {
 		bind(&rcoreRestoreSortOrder, "rcore_restore_sort_order")
 		bind(&rcoreRestoreRowsJSON, "rcore_restore_rows_json")
 		bind(&rcoreRegistrySetRbac, "rcore_registry_set_rbac")
+		bind(&rcoreRegistrySetExemptRoles, "rcore_registry_set_exempt_roles")
+		bind(&rcoreRegistrySetDenyWriteRoles, "rcore_registry_set_deny_write_roles")
+		bind(&rcoreRegistrySetUnconfiguredPolicy, "rcore_registry_set_unconfigured_policy")
 		bind(&rcoreRbacEnabled, "rcore_rbac_enabled")
 		bind(&rcoreRbacCan, "rcore_rbac_can")
 		bind(&rcoreRbacReadable, "rcore_rbac_readable_fields")

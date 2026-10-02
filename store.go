@@ -737,6 +737,37 @@ func (s *Store) SetRbac(policy map[string]any) error {
 	return callFFIInto(rcoreRegistrySetRbac(s.handle, arg), nil)
 }
 
+// SetExemptRoles 注入豁免角色清单（命中者在一切判决环节直接放行）。
+// 判决唯一在 core：本方法仅透传配置。默认空——无豁免（清单化语义，见迁移指南）。
+func (s *Store) SetExemptRoles(roles []string) error {
+	arg, err := cArgFor(roles)
+	if err != nil {
+		return err
+	}
+	defer freeCArg(arg)
+	return callFFIInto(rcoreRegistrySetExemptRoles(s.handle, arg), nil)
+}
+
+// SetDenyWriteRoles 注入拒写角色清单（命中者一切写路径拒绝，读不受影响）。
+func (s *Store) SetDenyWriteRoles(roles []string) error {
+	arg, err := cArgFor(roles)
+	if err != nil {
+		return err
+	}
+	defer freeCArg(arg)
+	return callFFIInto(rcoreRegistrySetDenyWriteRoles(s.handle, arg), nil)
+}
+
+// SetUnconfiguredPolicy 设置未配置姿态（"open" / "closed"）；未知值由 core 显式报错。
+func (s *Store) SetUnconfiguredPolicy(policy string) error {
+	arg, err := cArgFor(policy)
+	if err != nil {
+		return err
+	}
+	defer freeCArg(arg)
+	return callFFIInto(rcoreRegistrySetUnconfiguredPolicy(s.handle, arg), nil)
+}
+
 // RbacEnabled 返回 RBAC 策略是否已注入。
 func (s *Store) RbacEnabled() (bool, error) {
 	var enabled bool
