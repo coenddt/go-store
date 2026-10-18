@@ -30,6 +30,7 @@ var sqliteTypes = map[string]string{
 	"date":     "INTEGER",
 	"object":   "TEXT",
 	"array":    "TEXT",
+	"vector":   "TEXT",
 }
 
 func quoteIdentSQLite(ident string) string {
