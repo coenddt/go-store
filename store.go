@@ -258,7 +258,7 @@ func (s *Store) QueryWithCount(ctx context.Context, gql string, params map[strin
 }
 
 // execCountScalar 执行 countDocuments 翻译结果，取第一行第一列标量
-//（对齐 node 执行器 shapeResult 的 `case 'countDocuments': _scalar(out.rows)`；
+// （对齐 node 执行器 shapeResult 的 `case 'countDocuments': _scalar(out.rows)`；
 // count 的 RowShape 为 empty，行还原产出空文档，必须取原始标量）。
 func (s *Store) execCountScalar(ctx context.Context, cmd json.RawMessage) (float64, error) {
 	if len(cmd) == 0 || string(cmd) == "null" {
