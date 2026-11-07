@@ -1,0 +1,63 @@
+# go-store CI：构建 core-ffi cdylib（rust-store）后跑 Go 全量测试。
+#
+# 为什么需要：go-store 通过 purego 动态绑定 rust-store 的 `rust_store_ffi` cdylib，
+# 任一 `rcore_*` 符号缺失都会让 `Open()` 返回 initErr。绑定符号随 rust-store 演进，
+# 没有本 workflow 时「rust-store 删/改符号 → go-store 运行时才炸」无人拦截。
+#
+# 目录布局：rust-store 与 go-store 是两个独立仓库，本 workflow 把它们 checkout 成
+# 兄弟目录（`<workspace>/rust-store` 与 `<workspace>/go-store`），与本地开发布局一致；
+# go-store 的 defaultLibraryPath 以包目录为基准探测 `../rust-store/target/{release,debug}`。
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # core-ffi 产出 Windows dll；purego 加载 dll 的路径解析与测试基线都在 Windows 上验证过。
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout go-store
+        uses: actions/checkout@v4
+        with:
+          path: go-store
+
+      - name: Checkout rust-store（绑定符号来源）
+        uses: actions/checkout@v4
+        with:
+          repository: coenddt/rust-store
+          # 私有仓库需要 RUST_STORE_TOKEN（contents:read）；公开仓库回落默认 github.token。
+          token: ${{ secrets.RUST_STORE_TOKEN || github.token }}
+          path: rust-store
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go-store/go.mod
+          cache-dependency-path: go-store/go.sum
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build core-ffi cdylib
+        working-directory: rust-store
+        run: cargo build -p rust-store-ffi --locked
+
+      - name: Verify dll produced
+        run: |
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'rust-store/target/debug/rust_store_ffi.dll'
+          if (-not (Test-Path $dll)) { throw "未产出 $dll" }
+          Get-FileHash $dll -Algorithm SHA256 | Format-List
+
+      - name: go test
+        working-directory: go-store
+        env:
+          RUST_STORE_FFI: ${{ github.workspace }}\rust-store\target\debug\rust_store_ffi.dll
+        run: go test ./... -count=1

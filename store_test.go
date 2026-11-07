@@ -346,3 +346,99 @@ func TestRbacReadableFieldsAndRowCondition(t *testing.T) {
 		t.Fatalf("ownerOnly 行条件应 createdBy=u9: %v", cond)
 	}
 }
+
+// tableColumns 返回建表物理列名（按 cid 顺序）。
+func tableColumns(t *testing.T, s *Store, table string) []string {
+	t.Helper()
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('` + table + `') ORDER BY cid`)
+	if err != nil {
+		t.Fatalf("pragma_table_info(%s): %v", table, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan 列名: %v", err)
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// TestDDLColumnNamesMatchExecution 锁定「DDL 物理列名 == core 执行期 SQL 列名」：
+// 建表必须用 snake_case（created_at / updated_at / created_by / deleted_at），
+// 且真实 Insert 不再报 `no column named created_at`。
+func TestDDLColumnNamesMatchExecution(t *testing.T) {
+	// 物理名唯一算法在 core::naming（经 FFI）：camelCase → snake_case，保留名原样
+	for _, c := range []struct{ logical, want string }{
+		{"createdAt", "created_at"},
+		{"updatedAt", "updated_at"},
+		{"orderTotal", "order_total"},
+		{"_id", "_id"},
+		{"__present", "__present"},
+	} {
+		got, err := pname(c.logical)
+		if err != nil {
+			t.Fatalf("pname(%s): %v", c.logical, err)
+		}
+		if got != c.want {
+			t.Fatalf("pname(%s) = %q, want %q", c.logical, got, c.want)
+		}
+	}
+
+	s, err := Open("sqlite::memory:")
+	if err != nil {
+		t.Fatalf("Open 失败: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	schema := map[string]any{
+		"name":       "orderItem",
+		"collection": "orderItem",
+		"idPrefix":   "oi",
+		"read":       []any{"creator"}, // 触发归属键补列（core registry::add_owner_field）
+		"fields": map[string]any{
+			"orderTotal": map[string]any{"type": "number"},
+			"meta":       map[string]any{"type": "object"},
+		},
+	}
+	if err := s.Register(schema); err != nil {
+		t.Fatalf("注册失败: %v", err)
+	}
+	if err := s.EnsureTables(schema); err != nil {
+		t.Fatalf("建表失败: %v", err)
+	}
+
+	wantMain := []string{"_id", "meta", "order_total", "created_at", "updated_at", "created_by", "__present"}
+	if got := tableColumns(t, s, "order_item"); !equalStrings(got, wantMain) {
+		t.Fatalf("主表列名 = %v, want %v", got, wantMain)
+	}
+	wantArch := append(append([]string{}, wantMain...), "deleted_at")
+	if got := tableColumns(t, s, "order_item_deleted"); !equalStrings(got, wantArch) {
+		t.Fatalf("归档表列名 = %v, want %v", got, wantArch)
+	}
+
+	// 端到端：core 执行期 SQL 写 created_at / updated_at / created_by；
+	// 任一列名不一致即在此报 `table order_item has no column named ...`。
+	doc, err := s.Insert(context.Background(), "orderItem",
+		map[string]any{"orderTotal": 1.5}, &Context{UserID: "u1"})
+	if err != nil {
+		t.Fatalf("insert 失败（DDL 与执行期列名不一致）: %v", err)
+	}
+	if doc["_id"] == nil {
+		t.Fatalf("insert 未返回 _id: %v", doc)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

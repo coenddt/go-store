@@ -13,7 +13,7 @@
 |---|---|---|
 | **后端：SQLite** | ✅ | DSN：`sqlite://path.db` / `sqlite::memory:`（另兼容驱动原生 `path.db` / `:memory:` / `file:...`） |
 | 后端：MySQL / PostgreSQL / MongoDB / local | ❌ | 属后续阶段（与 `rust-store/host` v0 同策略） |
-| `Open` / `Close` / `Register` / `SchemaFieldsKeys` / `ListSchemas` | ✅ | schema 注册与元数据 |
+| `Open` / `Close` / `Register` / `SchemaFieldsKeys` / `SchemaFields` / `ListSchemas` | ✅ | schema 注册与元数据 |
 | 读：`Query` / `QueryOne` / `QueryWithCount` | ✅ | 含两阶段（关系展开）、聚合（core 规划） |
 | 写：`Insert` / `Update` / `Remove` | ✅ | `Update` 探针重入；`Remove` 归档编排（返回计数） |
 | 计算列 `fn`（同步回调桥） | ✅ | `RegisterSyncCompute` |
@@ -115,7 +115,7 @@ import gostore "github.com/coenddt/go-store"
 | Go | `go 1.26.0`（`go.mod` 声明） | `go.mod` |
 | **C 工具链 / cgo** | **不需要** | `ffi.go` 用 purego 运行时加载 |
 | SQLite 驱动 | 纯 Go 的 `modernc.org/sqlite`（注册驱动名 `"sqlite"`），无 C 依赖 | `exec.go` |
-| core-ffi 产物 | cdylib `rust_store_ffi.dll`（crate `rust-store-ffi` 0.1.0，`crate-type=["cdylib"]`） | `rust-store/core-ffi` |
+| core-ffi 产物 | cdylib `rust_store_ffi.dll`（crate `rust-store-ffi` 0.1.0，`crate-type=["cdylib"]`），**必须导出 `rcore_translate_name`**（DDL 物理名走 core::naming，见 §9.2） | `rust-store/core-ffi` |
 | 运行 OS | **Windows**（见下） | `load_windows.go` / `util.go` |
 
 **构建 core-ffi 产物**（在 `rust-store/` 目录）：
@@ -124,6 +124,14 @@ import gostore "github.com/coenddt/go-store"
 cargo build -p rust-store-ffi --release   # → target/release/rust_store_ffi.dll
 # 或 debug：cargo build -p rust-store-ffi  → target/debug/rust_store_ffi.dll
 ```
+
+> ⚠️ **绑定版本要求（旧 dll 会在首次 `Open` 即失败，不静默降级）**：
+> go-store 的 DDL 物理名经 FFI `rcore_translate_name` 调用 `core::naming`，因此 dll 必须含该导出。
+> 实测报错原文：
+> - 缺符号：`Open 失败: cdylib 缺少导出符号 rcore_translate_name: GetProcAddress(rcore_translate_name): The specified procedure could not be found.`
+> - dll 不存在：`Open 失败: 加载 rust-store cdylib 失败（路径 "C:\\nonexistent\\rust_store_ffi.dll"；应先构建 core-ffi，见 README）: The specified module could not be found.`
+>
+> 部署时必须把 go-store 二进制与 `rust_store_ffi.dll` 同批升级（`load()` 是进程级幂等）。
 
 **库路径探测顺序**（`ffi.go` 的 `defaultLibraryPath`）：
 
@@ -229,6 +237,7 @@ func main() {
 | `Close` | `func (s *Store) Close() error` | 释放 core Registry 句柄与连接池 |
 | `Register` | `func (s *Store) Register(defn map[string]any) error` | 注册 schema（与 `nodejs-store` 同 JSON 契约），core 自动派生 `<Name>Deleted` 归档表；`idPrefix` 与 fields 键同步缓存到宿主侧 |
 | `SchemaFieldsKeys` | `func (s *Store) SchemaFieldsKeys(schema string) []string` | 已注册 schema 的 fields 键列表（**字母序**；未注册返回 `nil`）。供适配层拼 GQL 投影段 |
+| `SchemaFields` | `func (s *Store) SchemaFields(schema string) map[string]any` | 已注册 schema 的 fields 定义树（只读；未注册返回 `nil`）。供协议皮生成上传可写点路径白名单 |
 | `ListSchemas` | `func (s *Store) ListSchemas() ([]string, error)` | 已注册 schema 名列表 |
 
 ### 7.3 读路径
@@ -440,18 +449,28 @@ rows, _ := store.Query(ctx, "order { status, statusUpper, amount, amountAud }", 
 
 - 主键固定为 `"_id" TEXT PRIMARY KEY`（autoincrement 主键属后续阶段；字段名为 `_id` 时跳过重复建列）。
 - 每表必建 `"__present" TEXT` 哨兵列（区分「显式 null」与「字段缺失」，core dialect 物理契约）。
-- `timestamps !== false`（默认 `true`）→ 追加 `createdAt` / `updatedAt`（`INTEGER` 毫秒）；归档表额外带 `deletedAt`。
+- 物理列名 = `core::naming` 的 snake_case（经 FFI；`_id` 与 `__` 前缀原样），
+  与执行期 SQL 同源——宿主不自研转换，否则会报 `no column named created_at`。
+- `timestamps !== false`（默认 `true`）→ 追加 `created_at` / `updated_at`（`INTEGER` 毫秒）；归档表额外带 `deleted_at`。
+- `read` / `write` 含 `creator` → 补归属键列（`ownerKey`，缺省 `createdBy` → `created_by`），
+  与 core `registry::add_owner_field` 同规则。
 - 字段名排序后输出，保证 DDL 文本确定。
 - 未在类型表内的 `type` → 显式报错 `字段 <f> 类型 <t> 不在 SQLite v0 类型表内`。
 
 ```go
 stmts, err := gostore.CreateTableStatements(schema) // []string{主表, 归档表}
 // 例：
-// CREATE TABLE IF NOT EXISTS "orders" ("_id" TEXT PRIMARY KEY, "amount" INTEGER, "status" TEXT, "createdAt" INTEGER, "updatedAt" INTEGER, "__present" TEXT)
-// CREATE TABLE IF NOT EXISTS "orders_deleted" (..., "deletedAt" INTEGER)
+// CREATE TABLE IF NOT EXISTS "orders" ("_id" TEXT PRIMARY KEY, "amount" INTEGER, "status" TEXT, "created_at" INTEGER, "updated_at" INTEGER, "__present" TEXT)
+// CREATE TABLE IF NOT EXISTS "orders_deleted" (..., "deleted_at" INTEGER)
 ```
 
 **v0 未含**：`schema.indexes` 索引 DDL、autoincrement 主键、MySQL/PG 方言。建表也可由调用方脚本替代。
+
+> ⚠️ **旧表不会自动迁移**：DDL 使用 `CREATE TABLE IF NOT EXISTS`，物理名统一为 snake_case 后，
+> 旧版本建出的 camelCase 表（`orderItem`、`createdAt`、`createdBy`、`<collection>Deleted` 等）不会被改写，
+> 升级后执行期 SQL 会报 `no such table` / `no such column`。
+> 处理方式：可丢弃的库直接删库重建；需保数据的库在停机窗口内做「表/列重命名」或「导出 → 重建 → 回灌」，迁移前先备份。
+> 判定方法：`SELECT name FROM sqlite_master WHERE type='table'` 含大写字母，或 `pragma_table_info` 出现 camelCase 列。
 
 ---
 
@@ -741,6 +760,15 @@ go test -run TestInsertQueryUpdateRemove -v
 测试文件 `store_test.go` 覆盖：`Insert/Query/QueryOne/Update/Remove` 全链路、计算列（sync `fn` + 批量 `asyncFn`）、`QueryWithCount` 分页、`unsupported` 显式报错、RBAC（注入/判决/可读字段/行级条件/拒写）。测试与断言对齐 `rust-store/host/tests/sqlite_e2e.rs`（家族行为基准）。
 
 > **前置**：测试会触发 `Open` → 加载 cdylib，因此运行前必须先构建 `rust_store_ffi.dll`，或设置 `RUST_STORE_FFI` / `gostore.LibraryPath`。
+
+**CI**：`.github/workflows/ci.yml`（本轮落地）。`windows-latest` 上把 `rust-store` 与 `go-store` checkout 成兄弟目录（与本地布局一致），`cargo build -p rust-store-ffi --locked` 产出 `rust-store/target/debug/rust_store_ffi.dll`，再以 `RUST_STORE_FFI` 显式注入后跑 `go test ./... -count=1`。
+
+**GitHub 上能否真正跑起来**：
+
+- 构建设计上可跑：Rust stable、Go（从 `go.mod` 取版本）与 Windows runner 都是标准托管能力；dll 由 workflow 内的 cargo 构建，不依赖任何预置产物。
+- 前提 1：`coenddt/rust-store` 必须是 public，或在本仓库配置 `RUST_STORE_TOKEN`（`contents: read`）。workflow 已按 `secrets.RUST_STORE_TOKEN || github.token` 回退。
+- 前提 2：`rust-store` 的 `Cargo.lock` 必须可解析 `--locked`（core 并行改动期间若 lock 未提交会失败，届时去掉 `--locked` 或先提交 lock）。
+- **本机无法验证连通性**：`git ls-remote https://github.com/coenddt/rust-store.git` 超时（网络不通），故上述为静态推演；首次在 GitHub 触发后需核对 dll 步骤的 SHA256 输出与 `go test` 全绿。若仓库实际不可达，缺口就是「跨仓 checkout 需要可见性/凭据」，需补 `RUST_STORE_TOKEN`。
 
 ---
 

@@ -25,9 +25,10 @@ type Store struct {
 	db      *sql.DB
 	backend string // "sqlite"（v0 范围，与 rust-store/host 一致）
 
-	mu       sync.RWMutex
-	prefixes map[string]string   // schema 名 → idPrefix（register 时缓存，供 generate_id）
-	fields   map[string][]string // schema 名 → fields 键列表（register 时缓存，供 REST 投影）
+	mu        sync.RWMutex
+	prefixes  map[string]string         // schema 名 → idPrefix（register 时缓存，供 generate_id）
+	fields    map[string][]string       // schema 名 → fields 键列表（register 时缓存，供 REST 投影）
+	fieldsDef map[string]map[string]any // schema 名 → fields 定义树（register 时缓存，供适配层生成白名单）
 
 	rng      xorshift
 	computes *computeTable
@@ -54,12 +55,13 @@ func Open(dsn string) (*Store, error) {
 		return nil, fmt.Errorf("SQLite 连接失败: %w", err)
 	}
 	s := &Store{
-		handle:   rcoreRegistryNew(0),
-		db:       db,
-		backend:  "sqlite",
-		prefixes: map[string]string{},
-		fields:   map[string][]string{},
-		computes: &computeTable{async: map[string]AsyncComputeFunc{}, syncF: map[string]SyncComputeFunc{}},
+		handle:    rcoreRegistryNew(0),
+		db:        db,
+		backend:   "sqlite",
+		prefixes:  map[string]string{},
+		fields:    map[string][]string{},
+		fieldsDef: map[string]map[string]any{},
+		computes:  &computeTable{async: map[string]AsyncComputeFunc{}, syncF: map[string]SyncComputeFunc{}},
 	}
 	s.rng.s = uint64(nowMS()) ^ 0x9E3779B97F4A7C15
 	if s.handle == 0 {
@@ -105,15 +107,18 @@ func (s *Store) Register(defn map[string]any) error {
 	prefix, _ := defn["idPrefix"].(string)
 	if name != "" {
 		keys := []string{}
+		def := map[string]any{}
 		if fm, ok := defn["fields"].(map[string]any); ok {
-			for k := range fm {
+			for k, v := range fm {
 				keys = append(keys, k)
+				def[k] = v
 			}
 		}
 		sort.Strings(keys)
 		s.mu.Lock()
 		s.prefixes[name] = prefix
 		s.fields[name] = keys
+		s.fieldsDef[name] = def
 		s.mu.Unlock()
 	}
 	return nil
@@ -125,6 +130,14 @@ func (s *Store) SchemaFieldsKeys(schema string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.fields[schema]
+}
+
+// SchemaFields 返回已注册 schema 的 fields 定义树（字段名 → 定义对象；未注册返回 nil）。
+// 供适配层按 spec/02 生成上传可写点路径白名单（本方法只读，不做语义判断）。
+func (s *Store) SchemaFields(schema string) map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fieldsDef[schema]
 }
 
 // ListSchemas 返回已注册 schema 名。

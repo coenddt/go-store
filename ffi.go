@@ -31,6 +31,7 @@ var (
 	rcorePlanRemove        func(handle uint64, schema, ctx, cond, probe unsafe.Pointer) unsafe.Pointer
 	rcorePlanArchiveDocs   func(handle uint64, schema, docs unsafe.Pointer, now int64) unsafe.Pointer
 	rcoreTranslate         func(handle uint64, backend, cmd unsafe.Pointer) unsafe.Pointer
+	rcoreTranslateName     func(logical, backend unsafe.Pointer) unsafe.Pointer
 	rcoreFinalizePrepare   func(handle uint64, post, items, ctx unsafe.Pointer) unsafe.Pointer
 	rcoreFinalizeStrip     func(post, items unsafe.Pointer) unsafe.Pointer
 	rcoreRestoreSortOrder  func(items, ids, sort unsafe.Pointer) unsafe.Pointer
@@ -83,6 +84,7 @@ func load() error {
 		bind(&rcorePlanRemove, "rcore_plan_remove")
 		bind(&rcorePlanArchiveDocs, "rcore_plan_archive_docs")
 		bind(&rcoreTranslate, "rcore_translate")
+		bind(&rcoreTranslateName, "rcore_translate_name")
 		bind(&rcoreFinalizePrepare, "rcore_finalize_prepare")
 		bind(&rcoreFinalizeStrip, "rcore_finalize_strip")
 		bind(&rcoreRestoreSortOrder, "rcore_restore_sort_order")
