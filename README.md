@@ -2,8 +2,13 @@
 
 **`rust-store-core` 的 Go 宿主绑定** —— `nodejs-store` / `py-store` / `rust-store(host)` 的 Go 孪生。用一份纯 JSON schema 定义模型、用 MongoDB 风格的 GQL 树形语法查询，内置 RBAC、计算列与软删除归档。当前 **v0：后端仅 SQLite**。
 
-> **发布状态**：本仓库为纯 Go 实现，**未发布、无 tag、不参与 release-all 发版**（无 CI、无版本声明）。
-> 语义只有一份（Rust core）；Go 宿主只做 IO 与命令序列编排，与 Node / Python 行为不漂移。
+> **发布状态**：当前 **0.1.0**（首发，未打 tag）。纯 Go 实现，不参与 `release-all` 的协议皮批量发版；
+> 版本号由发布流程统一 bump。语义只有一份（Rust core）；Go 宿主只做 IO 与命令序列编排，与 Node / Python 行为不漂移。
+>
+> **升级须知（0.1.0）**：建表物理名统一 snake_case（`created_at` / `updated_at` / `deleted_at` / `created_by`），
+> 归档表为 `<collection>_deleted`；`vector` 字段列类型为 `TEXT`。旧库不会自动迁移，详见
+> [CHANGELOG](./CHANGELOG.md) 的 `Migration` 一节。`rust_store_ffi.dll` 必须与二进制同批升级
+> （需导出 `rcore_translate_name`）。
 
 ---
 
