@@ -3,7 +3,7 @@
 本文件记录 go-store（`rust-store/core` 的 Go 宿主绑定）的行为变更。
 格式遵循 Keep a Changelog；版本号由发布流程统一 bump。
 
-## [Unreleased]
+## 0.1.0 (2026-11-08)
 
 > 首个发布版本定为 **0.1.0**（未发布）。首发即包含下列两项行为变化，部署前请按 `Migration` 一节核对旧库。
 
